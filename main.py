@@ -46,8 +46,8 @@ def setup_argparse():
         "--format",
         dest="format",
         default="csv",
-        choices=["csv", "other_format"],  # Expand as needed
-        help="Format of the input file. Currently supports 'csv'.  Future formats can be added here. Defaults to 'csv'.",
+        choices=["csv"],
+        help="Format of the input file. Only 'csv' is supported. Defaults to 'csv'.",
     )
 
     return parser
@@ -71,12 +71,6 @@ def load_data(input_file, file_format):
             df = pd.read_csv(input_file, low_memory=False)  # low_memory=False for large files
             logging.info(f"Successfully loaded data from {input_file}")
             return df
-        elif file_format == "other_format":
-            # Placeholder for other file formats (e.g., PCAP, JSON)
-            # Implement parsing logic here
-            logging.error("Unsupported file format: other_format")
-            print("Error: Unsupported file format.  Only CSV is currently supported.")  # Informative message to the user
-            return None
         else:
             logging.error(f"Invalid file format: {file_format}")
             print("Error: Invalid file format.")
@@ -121,7 +115,14 @@ def analyze_network_traffic(df, threshold):
         if 'source_ip' not in df.columns or 'destination_ip' not in df.columns or 'bytes_sent' not in df.columns or 'packets_sent' not in df.columns:
             logging.error("Required columns ('source_ip', 'destination_ip', 'bytes_sent', 'packets_sent') are missing from the input data.")
             print("Error: Required columns ('source_ip', 'destination_ip', 'bytes_sent', 'packets_sent') are missing from the input data.")
-            return pd.DataFrame()  # Return an empty DataFrame to avoid further errors
+            # None, not an empty frame: an empty frame means "ran fine, found
+            # nothing", and the caller exits 1 on None. Returning empty here
+            # used to print a clean report for input that was never analysed.
+            return None
+        if df.empty:
+            logging.error("Input data has no rows to analyse.")
+            print("Error: Input data has no rows to analyse.")
+            return None
 
         # Group by source and destination IP, calculate total bytes and packets sent
         connection_stats = df.groupby(['source_ip', 'destination_ip']).agg(
@@ -134,7 +135,10 @@ def analyze_network_traffic(df, threshold):
         # This is a simplified example; improve this based on real-world traffic patterns
         connection_stats['anomaly_score'] = (connection_stats['total_bytes'] * connection_stats['total_packets']) / connection_stats['connection_count']
 
-        # Normalize the anomaly score between 0 and 1 using min-max scaling
+        # Normalize the anomaly score between 0 and 1 using min-max scaling.
+        # The score is relative to this input file only: with a single
+        # connection group max equals min, every score is set to 0.0 below,
+        # and nothing can be flagged however large the transfer was.
         min_score = connection_stats['anomaly_score'].min()
         max_score = connection_stats['anomaly_score'].max()
         if max_score - min_score != 0:  # Avoid division by zero if all scores are the same
@@ -150,11 +154,11 @@ def analyze_network_traffic(df, threshold):
     except ValueError as ve:
         logging.error(f"ValueError during analysis: {ve}")
         print(f"Error: {ve}")
-        return pd.DataFrame()  # Return an empty DataFrame in case of error
+        return None
     except Exception as e:
         logging.error(f"An unexpected error occurred during analysis: {e}")
-        print(f"An unexpected error occurred during analysis: {e}")  # Informative message for the user
-        return pd.DataFrame()  # Return an empty DataFrame in case of error
+        print(f"An unexpected error occurred during analysis: {e}")
+        return None
 
 
 def generate_report(suspicious_connections, output_file, threshold):
@@ -188,12 +192,15 @@ def generate_report(suspicious_connections, output_file, threshold):
                 f.write("\n\n")
                 logging.info(f"Suspicious connections found. Report written to {output_file}")
 
+        return True
     except IOError as ioe:
         logging.error(f"IOError while writing the report: {ioe}")
-        print(f"Error: Could not write report to {output_file}: {ioe}")  # Informative message to the user
+        print(f"Error: Could not write report to {output_file}: {ioe}")
+        return False
     except Exception as e:
         logging.error(f"An unexpected error occurred while generating the report: {e}")
-        print(f"An unexpected error occurred while generating the report: {e}")  # Informative message for the user
+        print(f"An unexpected error occurred while generating the report: {e}")
+        return False
 
 
 def main():
@@ -222,11 +229,15 @@ def main():
 
         # Analyze network traffic
         suspicious_connections = analyze_network_traffic(df, args.threshold)
+        if suspicious_connections is None:
+            sys.exit(1)
 
-        # Generate report
-        generate_report(suspicious_connections, args.output_file, args.threshold)
+        # Generate report. The saved message is printed only when the write
+        # actually happened; it used to print even after an IOError.
+        if not generate_report(suspicious_connections, args.output_file, args.threshold):
+            sys.exit(1)
 
-        print(f"Analysis complete. Report saved to {args.output_file}") # Confirmation for the user
+        print(f"Analysis complete. Report saved to {args.output_file}")
         logging.info("Reverse shell detector completed successfully.")
 
     except Exception as e:
@@ -237,17 +248,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# Example Usage:
-# python main.py -i network_traffic.csv -o suspicious_connections.txt -t 0.9
-# python main.py -i network_traffic.csv --format csv
-# python main.py -i network_traffic.csv --output my_report.txt
-
-# Offensive Tool Considerations:
-# 1.  Evasion Techniques: Adversaries may use encryption, obfuscation, or steganography to hide reverse shell traffic.  Future versions should incorporate techniques to detect these patterns.
-# 2.  Dynamic Ports: Adversaries often use random or high-numbered ports for reverse shells. The analysis should consider port ranges and dynamically adjust detection thresholds.
-# 3.  Timings: Adversaries may introduce delays or jitter into reverse shell communications to evade detection. Analyze inter-packet timings for anomalies.
-# 4.  Protocol Spoofing: Adversaries may attempt to disguise reverse shell traffic as legitimate protocols (e.g., HTTP, DNS). Use deep packet inspection and protocol analysis to verify traffic identity.
-# 5.  User-Agent String:  Check for suspicious or missing User-Agent strings in HTTP traffic.
-# 6.  Data Size:  Monitor the size of data being transmitted back and forth.  Unusually small or large payloads can be indicative of a reverse shell.
