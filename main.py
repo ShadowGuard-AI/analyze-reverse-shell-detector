@@ -42,6 +42,13 @@ def setup_argparse():
         help="Threshold for flagging suspicious connections (e.g., communication frequency, data transfer).  A higher value means fewer false positives, but a greater risk of missing actual shells. Defaults to 0.8.",
     )
     parser.add_argument(
+        "--min-bytes",
+        dest="min_bytes",
+        type=int,
+        default=1000000,
+        help="Minimum total bytes a connection group must reach before the relative score alone can flag it. Defaults to 1000000 (1 MB). A group can also be flagged on its absolute score alone, which is computed from total bytes only.",
+    )
+    parser.add_argument(
         "-f",
         "--format",
         dest="format",
@@ -89,7 +96,10 @@ def load_data(input_file, file_format):
         return None
 
 
-def analyze_network_traffic(df, threshold):
+ABSOLUTE_SCALE_BYTES = 100000000
+
+
+def analyze_network_traffic(df, threshold, min_bytes=1000000):
     """
     Analyzes network traffic data to detect potential reverse shell connections.
 
@@ -136,9 +146,8 @@ def analyze_network_traffic(df, threshold):
         connection_stats['anomaly_score'] = (connection_stats['total_bytes'] * connection_stats['total_packets']) / connection_stats['connection_count']
 
         # Normalize the anomaly score between 0 and 1 using min-max scaling.
-        # The score is relative to this input file only: with a single
-        # connection group max equals min, every score is set to 0.0 below,
-        # and nothing can be flagged however large the transfer was.
+        # This normalized score is relative to this input file only, so it
+        # is kept as supporting detail and never flags a group on its own.
         min_score = connection_stats['anomaly_score'].min()
         max_score = connection_stats['anomaly_score'].max()
         if max_score - min_score != 0:  # Avoid division by zero if all scores are the same
@@ -146,8 +155,21 @@ def analyze_network_traffic(df, threshold):
         else:
             connection_stats['normalized_score'] = 0.0  # All scores are the same, so normalize to 0.0
 
-        # Flag connections exceeding the threshold
-        suspicious_connections = connection_stats[connection_stats['normalized_score'] > threshold]
+        # Absolute score from total bytes alone, on a fixed scale:
+        # a group at ABSOLUTE_SCALE_BYTES scores 0.5, and the score
+        # approaches 1.0 as the transfer grows past that scale. This
+        # lets a single large group be flagged, which the relative
+        # score alone could never do.
+        connection_stats['absolute_score'] = connection_stats['total_bytes'] / (connection_stats['total_bytes'] + ABSOLUTE_SCALE_BYTES)
+
+        # Flag a group when its absolute score exceeds the threshold,
+        # or when its relative score exceeds the threshold and the
+        # group also transferred at least min_bytes in total. A small
+        # group is therefore not flagged on relativity alone.
+        suspicious_connections = connection_stats[
+            (connection_stats['absolute_score'] > threshold)
+            | ((connection_stats['normalized_score'] > threshold) & (connection_stats['total_bytes'] >= min_bytes))
+        ]
 
         logging.info(f"Analysis complete. Found {len(suspicious_connections)} suspicious connections based on the threshold.")
         return suspicious_connections
@@ -161,7 +183,7 @@ def analyze_network_traffic(df, threshold):
         return None
 
 
-def generate_report(suspicious_connections, output_file, threshold):
+def generate_report(suspicious_connections, output_file, threshold, min_bytes=1000000):
     """
     Generates a report of suspicious connections and saves it to a file.
 
@@ -181,6 +203,8 @@ def generate_report(suspicious_connections, output_file, threshold):
             f.write("Reverse Shell Detection Report\n")
             f.write("-------------------------------\n")
             f.write(f"Analysis Threshold: {threshold}\n")
+            f.write(f"Minimum Bytes for a Relative Score Flag: {min_bytes}\n")
+            f.write("Scoring: each connection group gets an absolute score from its total bytes alone (total_bytes / (total_bytes + 100000000)) and a relative normalized score computed within this input file. A group is flagged when its absolute score exceeds the threshold, or when its relative score exceeds the threshold and its total bytes reach the minimum bytes value. The relative score alone never flags a group below that minimum.\n")
             f.write("-------------------------------\n\n")
 
             if suspicious_connections.empty:
@@ -228,13 +252,13 @@ def main():
             sys.exit(1)  # Exit if data loading failed
 
         # Analyze network traffic
-        suspicious_connections = analyze_network_traffic(df, args.threshold)
+        suspicious_connections = analyze_network_traffic(df, args.threshold, args.min_bytes)
         if suspicious_connections is None:
             sys.exit(1)
 
         # Generate report. The saved message is printed only when the write
         # actually happened; it used to print even after an IOError.
-        if not generate_report(suspicious_connections, args.output_file, args.threshold):
+        if not generate_report(suspicious_connections, args.output_file, args.threshold, args.min_bytes):
             sys.exit(1)
 
         print(f"Analysis complete. Report saved to {args.output_file}")
