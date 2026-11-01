@@ -134,7 +134,15 @@ def analyze_network_traffic(df, threshold, min_bytes=1000000):
             print("Error: Input data has no rows to analyse.")
             return None
 
-        # Group by source and destination IP, calculate total bytes and packets sent
+        # Grouping is by the ordered pair over the whole file. The two
+        # directions of one conversation are two separate groups, and
+        # there is no time window anywhere, so a pair that moved a lot
+        # slowly over a month and a pair that moved it in a minute are
+        # the same shape here. Nothing in the score looks at ports,
+        # timing, or which side started the connection, which are the
+        # things that actually mark a reverse shell; volume is the
+        # whole signal this tool has, and a large backup flow wears it
+        # better than a small quiet shell does.
         connection_stats = df.groupby(['source_ip', 'destination_ip']).agg(
             total_bytes=('bytes_sent', 'sum'),
             total_packets=('packets_sent', 'sum'),
@@ -143,6 +151,11 @@ def analyze_network_traffic(df, threshold, min_bytes=1000000):
 
         # Calculate an "anomaly score" based on bytes transferred and packet count
         # This is a simplified example; improve this based on real-world traffic patterns
+        # Multiplying bytes by packets means many small packets score
+        # far above one large transfer of the same total, and dividing
+        # by row count only partly cancels that. The number has no unit
+        # and no meaning outside this file, which is exactly why only
+        # its normalised form is used, and only as a relative ranking.
         connection_stats['anomaly_score'] = (connection_stats['total_bytes'] * connection_stats['total_packets']) / connection_stats['connection_count']
 
         # Normalize the anomaly score between 0 and 1 using min-max scaling.
@@ -160,6 +173,10 @@ def analyze_network_traffic(df, threshold, min_bytes=1000000):
         # approaches 1.0 as the transfer grows past that scale. This
         # lets a single large group be flagged, which the relative
         # score alone could never do.
+        # At the default threshold of 0.8 this formula needs a group
+        # total over 400 MB before the absolute path can flag it at
+        # all, four times the scale constant. That is worth knowing
+        # before trusting a clean report on a small capture.
         connection_stats['absolute_score'] = connection_stats['total_bytes'] / (connection_stats['total_bytes'] + ABSOLUTE_SCALE_BYTES)
 
         # Flag a group when its absolute score exceeds the threshold,
