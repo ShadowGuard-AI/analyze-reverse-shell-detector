@@ -1,10 +1,10 @@
-![A volcanic cave in dark water: a coelacanth hanging full length between basalt walls, a dim entrance arch high at the upper right, one tiny gold lure far back, nothing readable](intro-banner.png)
+![Leaping salmon close up at the lip of the fall, water streaming off its red flank as it clears the last of the drop and the pool churns white below](intro-banner.png)
 
 # analyze-reverse-shell-detector
 
-![The cave with the coelacanth at its centre and the name in bone white across a pale band of fallen sediment on the rear wall, the only lettering in the scene](banner.png)
+![River driving down over a stepped weir in foam and spray, a line of salmon holding in the pool below and one red flanked fish mid leap at the centre fall while the whole current pours the other way, mossy banks at the frame edges](banner.png)
 
-![One lobed fin in abyss indigo on bone white, its rays divided in silt grey and one gold point at the tip of the foremost ray, the heading plate](logo.png)
+![One salmon mid leap against a small waterfall over grey rock, foam bursting white around it and a deep red flank showing along its side](logo.png)
 
 ![Cave scene in three depths: the entrance light slowly fails and recovers, the coelacanth corrects once with its fins and then again the other way, silt motes drift a short way and stop, and the lure on the near ledge brightens and dims at irregular intervals](scene.svg)
 
